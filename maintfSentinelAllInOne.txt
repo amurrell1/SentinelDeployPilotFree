@@ -48,6 +48,19 @@ resource "azurerm_sentinel_data_connector_azure_active_directory" "Azure_Active_
   name                       = "Azure Active Directory Identity Protection"
   log_analytics_workspace_id = azurerm_log_analytics_workspace.Log_Analytics_WorkSpace.id
 }
+#resource "azurerm_sentinel_data_connector_aws_cloud_trail" "AWS_Cloud_Trail" {
+#   name                       = "example"
+#  log_analytics_workspace_id = azurerm_log_analytics_solution.example.workspace_resource_id
+#  aws_role_arn               = "arn:aws:iam::000000000000:role/role1"
+#}
+#resource "azurerm_sentinel_data_connector_aws_s3" "AWS_S3" {
+ # name                       = "example"
+#  log_analytics_workspace_id = azurerm_log_analytics_solution.example.workspace_resource_id
+ # aws_role_arn               = "arn:aws:iam::000000000000:role/role1"
+ # destination_table          = "AWSGuardDuty"
+ # sqs_urls                   = ["https://sqs.us-east-1.amazonaws.com/000000000000/example"]
+ # depends_on                 = [azurerm_log_analytics_solution.example]
+#}
 resource "azurerm_sentinel_data_connector_azure_advanced_threat_protection" "Microsoft_Defender_for_Identity" {
   name                       = "Microsoft Defeneder for Identity"
   log_analytics_workspace_id = azurerm_log_analytics_workspace.Log_Analytics_WorkSpace.id
@@ -64,6 +77,14 @@ resource "azurerm_sentinel_data_connector_azure_security_center" "Defender_for_C
   name                       = "Defender for Cloud"
   log_analytics_workspace_id = azurerm_log_analytics_workspace.Log_Analytics_WorkSpace.id
 }
+resource "azurerm_sentinel_data_connector_threat_intelligence" "Threat_Intelligence_Taxii" {
+  name                       = "Threat Intelligence Taxii"
+  log_analytics_workspace_id = azurerm_log_analytics_solution.Log_Analytics_Solution_SecurityInsights.workspace_resource_id
+}
+#resource "azurerm_sentinel_data_connector_office_atp" "Defender_for_Office_365" {
+#  name                       = "Defender for Office 365"
+#  log_analytics_workspace_id = azurerm_log_analytics_workspace.Log_Analytics_WorkSpace.id
+#}
 resource "azurerm_sentinel_alert_rule_fusion" "Fusion_Alert" {
   name                       = "Microsoft Fusion Alert"
   log_analytics_workspace_id = azurerm_log_analytics_workspace.Log_Analytics_WorkSpace.id
@@ -126,4 +147,206 @@ resource "azurerm_sentinel_alert_rule_machine_learning_behavior_analytics" "Anom
   name                       = "Anomalous SSH Login Detection"
   log_analytics_workspace_id = azurerm_log_analytics_workspace.Log_Analytics_WorkSpace.id
   alert_rule_template_guid   = "fa118b98-de46-4e94-87f9-8e6d5060b60b"
+}
+#resource  "azurerm_sentinel_alert_rule_nrt" "example"
+#name                       = "example"
+#  log_analytics_workspace_id = azurerm_log_analytics_workspace.Log_Analytics_WorkSpace.id
+#  alert_rule_template_guid   = "example"
+#}
+resource "azurerm_sentinel_alert_rule_scheduled" "NOBELIUM_IOCs_related_to_FoggyWeb_backdoor"{
+  name                       = "NOBELIUM_IOCs_related_to_FoggyWeb_backdoor"
+  log_analytics_workspace_id = azurerm_log_analytics_solution.Log_Analytics_Solution_SecurityInsights.workspace_resource_id
+  display_name               = "NOBELIUM IOCs related to FoggyWeb backdoor"
+  severity                   = "High"
+  query                      = <<QUERY
+  let iocs = externaldata(DateAdded:string,IoC:string,Type:string,TLP:string) [@"https://raw.githubusercontent.com/Azure/Azure-Sentinel/master/Sample%20Data/Feeds/FoggyWebIOC.csv"] with (format="csv", ignoreFirstRecord=True);
+let sha256Hashes = (iocs | where Type == "sha256" | project IoC);
+let FilePaths = (iocs | where Type =~ "FilePath" | project IoC);
+let POST_URI = (iocs | where Type =~ "URI1" | project IoC);
+let GET_URI = (iocs | where Type =~ "URI2" | project IoC);
+//Include in the list below, the ADFS servers you know about in your environment.  In the next part of the query, we will try to identify them for you if you have the telemetry.
+let ADFS_Servers1 = datatable(Computer:string)
+[ "<ADFS01>.<DOMAIN>.<COM>",
+"<ADFS02>.<DOMAIN>.<COM>"
+];
+// Automatically identify potential ADFS services in your environment by searching process event telemetry for "Microsoft.IdentityServer.ServiceHost.exe".
+let ADFS_Servers2 = 
+(union isfuzzy=true
+(SecurityEvent
+| where EventID == 4688 and SubjectLogonId != "0x3e4"
+| where ProcessName has "Microsoft.IdentityServer.ServiceHost.exe"
+| distinct Computer
+),
+( WindowsEvent
+| where EventID == 4688 and EventData has "Microsoft.IdentityServer.ServiceHost.exe" and EventData has "0x3e4"
+| extend ProcessName = tostring(EventData.ProcessName)
+| where ProcessName == "Microsoft.IdentityServer.ServiceHost.exe"
+| extend SubjectLogonId = tostring(EventData.SubjectLogonId)
+| where SubjectLogonId != "0x3e4"
+| distinct Computer
+),
+(DeviceProcessEvents
+| where InitiatingProcessFileName == 'Microsoft.IdentityServer.ServiceHost.exe'
+| extend Computer = DeviceName
+| distinct Computer
+),
+(Event
+| where Source == "Microsoft-Windows-Sysmon"
+| where EventID == 1
+| extend EventData = parse_xml(EventData).DataItem.EventData.Data
+| mv-expand bagexpansion=array EventData
+| evaluate bag_unpack(EventData)
+| extend Key=tostring(['@Name']), Value=['#text']
+| evaluate pivot(Key, any(Value), TimeGenerated, Source, EventLog, Computer, EventLevel, EventLevelName, UserName, RenderedDescription, MG, ManagementGroupName, Type, _ResourceId)
+| extend process = split(Image, '\\', -1)[-1]
+| where process =~ "Microsoft.IdentityServer.ServiceHost.exe"
+| distinct Computer
+)
+);
+let ADFS_Servers =
+ADFS_Servers1
+| union  (ADFS_Servers2 | distinct Computer);
+(union isfuzzy=true
+(DeviceNetworkEvents
+| where DeviceName in (ADFS_Servers)
+| where isnotempty(InitiatingProcessSHA256) or isnotempty(InitiatingProcessFolderPath)
+| where  InitiatingProcessSHA256 has_any (sha256Hashes) or InitiatingProcessFolderPath has_any (FilePaths)
+| project TimeGenerated, ActionType, DeviceId, DeviceName, InitiatingProcessAccountDomain, InitiatingProcessAccountName, InitiatingProcessCommandLine, InitiatingProcessFolderPath, InitiatingProcessId,  InitiatingProcessParentFileName, InitiatingProcessFileName, RemoteIP, RemoteUrl, RemotePort, LocalIP, Type
+| extend timestamp = TimeGenerated, IPCustomEntity = RemoteIP, HostCustomEntity = DeviceName
+),
+(Event
+| where Source == "Microsoft-Windows-Sysmon" and EventID == '7'
+| where Computer in (ADFS_Servers)
+| extend EvData = parse_xml(EventData)
+| extend EventDetail = EvData.DataItem.EventData.Data
+| extend ImageLoaded = EventDetail.[5].["#text"], Hashes = EventDetail.[11].["#text"]
+| parse Hashes with * 'SHA256=' SHA256 '",' *
+| where ImageLoaded has_any (FilePaths) or SHA256 has_any (sha256Hashes) 
+| project TimeGenerated, EventDetail, UserName, Computer, Type, Source, SHA256, ImageLoaded, EventID
+| extend Type = strcat(Type,":",EventID, ": ", Source), Account = UserName, FileHash = SHA256, Image = EventDetail.[4].["#text"] 
+| extend timestamp = TimeGenerated, HostCustomEntity = Computer , AccountCustomEntity = Account, ProcessCustomEntity = tostring(split(Image, '\\', -1)[-1]), AlgorithmCustomEntity = "SHA256", FileHashCustomEntity = FileHash
+),
+(CommonSecurityLog
+| where FileHash in (sha256Hashes)
+| project TimeGenerated,  Message, SourceUserID, FileHash, Type
+| extend timestamp = TimeGenerated, AlgorithmCustomEntity = "SHA256", FileHashCustomEntity = FileHash
+),
+(DeviceEvents
+| where DeviceName in (ADFS_Servers)
+| extend FilePath = strcat(FolderPath, '\\', FileName)
+| where InitiatingProcessSHA256 has_any (sha256Hashes) or FilePath has_any (FilePaths)
+| project TimeGenerated, ActionType, DeviceId, DeviceName, InitiatingProcessAccountDomain, InitiatingProcessAccountName, InitiatingProcessCommandLine, InitiatingProcessFolderPath, InitiatingProcessId, InitiatingProcessParentFileName, InitiatingProcessFileName, InitiatingProcessSHA256, Type
+| extend Account = InitiatingProcessAccountName, Computer = DeviceName, CommandLine = InitiatingProcessCommandLine, FileHash = InitiatingProcessSHA256, Image = InitiatingProcessFolderPath
+| extend timestamp = TimeGenerated, HostCustomEntity = Computer , AccountCustomEntity = Account, ProcessCustomEntity = InitiatingProcessFileName, AlgorithmCustomEntity = "SHA256", FileHashCustomEntity = FileHash
+),
+(DeviceFileEvents
+| where DeviceName in (ADFS_Servers)
+| where FolderPath has_any (FilePaths) or SHA256 has_any (sha256Hashes)
+| project TimeGenerated, ActionType, DeviceId, DeviceName, InitiatingProcessAccountDomain, InitiatingProcessAccountName, InitiatingProcessCommandLine, InitiatingProcessFolderPath, InitiatingProcessId, InitiatingProcessParentFileName, InitiatingProcessFileName, InitiatingProcessSHA256, Type
+| extend Account = InitiatingProcessAccountName, Computer = DeviceName, CommandLine = InitiatingProcessCommandLine, FileHash = InitiatingProcessSHA256, Image = InitiatingProcessFolderPath
+| extend timestamp = TimeGenerated, HostCustomEntity = Computer , AccountCustomEntity = Account, ProcessCustomEntity = InitiatingProcessFileName, AlgorithmCustomEntity = "SHA256", FileHashCustomEntity = FileHash
+),
+(DeviceImageLoadEvents
+| where DeviceName in (ADFS_Servers)
+| where FolderPath has_any (FilePaths) or SHA256 has_any (sha256Hashes)
+| project TimeGenerated, ActionType, DeviceId, DeviceName, InitiatingProcessAccountDomain, InitiatingProcessAccountName, InitiatingProcessCommandLine, InitiatingProcessFolderPath, InitiatingProcessId, InitiatingProcessParentFileName, InitiatingProcessFileName, InitiatingProcessSHA256, Type
+| extend Account = InitiatingProcessAccountName, Computer = DeviceName, CommandLine = InitiatingProcessCommandLine, FileHash = InitiatingProcessSHA256, Image = InitiatingProcessFolderPath
+| extend timestamp = TimeGenerated, HostCustomEntity = Computer , AccountCustomEntity = Account, ProcessCustomEntity = InitiatingProcessFileName, AlgorithmCustomEntity = "SHA256", FileHashCustomEntity = FileHash
+),
+(Event
+| where Source == "Microsoft-Windows-Sysmon"
+| where Computer in (ADFS_Servers)
+| extend EvData = parse_xml(EventData)
+| extend EventDetail = EvData.DataItem.EventData.Data
+| parse EventDetail with * 'SHA256=' SHA256 '",' *
+| where EventDetail has_any (sha256Hashes) 
+| project TimeGenerated, EventDetail, UserName, Computer, Type, Source, SHA256
+| extend Type = strcat(Type, ": ", Source), Account = UserName, FileHash = SHA256, Image = EventDetail.[4].["#text"] 
+| extend timestamp = TimeGenerated, HostCustomEntity = Computer , AccountCustomEntity = Account, ProcessCustomEntity = tostring(split(Image, '\\', -1)[-1]), AlgorithmCustomEntity = "SHA256", FileHashCustomEntity = FileHash
+),
+(W3CIISLog 
+| where ( csMethod == 'GET' and csUriStem has_any (GET_URI)) or (csMethod == 'POST' and csUriStem has_any (POST_URI))
+| summarize StartTime = max(TimeGenerated), EndTime = min(TimeGenerated), cIP_MethodCount = count() 
+by cIP, cIP_MethodCountType = "Count of repeated entries, this is to reduce rowsets returned", csMethod, 
+csHost, scStatus, sIP, csUriStem, csUriQuery, csUserName, csUserAgent, csCookie, csReferer
+| extend timestamp = StartTime, IPCustomEntity = cIP, HostCustomEntity = csHost, AccountCustomEntity = csUserName
+),
+(imFileEvent
+| where DvcHostname in (ADFS_Servers)
+| where TargetFileSHA256 has_any (sha256Hashes) or FilePath has_any (FilePaths)
+| extend Account = ActorUsername, Computer = DvcHostname, IPAddress = SrcIpAddr, CommandLine = ActingProcessCommandLine, FileHash = TargetFileSHA256
+| project Type, TimeGenerated, Computer, Account, IPAddress, CommandLine, FileHash
+)
+)
+QUERY
+}
+#name                       = "NOBELIUM IOCs related to FoggyWeb backdoor"
+#log_analytics_workspace_id = azurerm_log_analytics_workspace.Log_Analytics_WorkSpace.id
+#alert_rule_template_guid   = "c37711a4-5f44-4472-8afc-0679bc0ef966"
+#}
+resource "azurerm_sentinel_alert_rule_scheduled" "Solorigate_Network_Beacon"{
+  name                       = "Solorigate_Network_Beacon"
+  log_analytics_workspace_id = azurerm_log_analytics_solution.Log_Analytics_Solution_SecurityInsights.workspace_resource_id
+  display_name               = "Solorigate Network Beacon"
+  severity                   = "High"
+  query                      = <<QUERY
+let domains = dynamic(["incomeupdate.com","zupertech.com","databasegalore.com","panhardware.com","avsvmcloud.com","digitalcollege.org","freescanonline.com","deftsecurity.com","thedoccloud.com","virtualdataserver.com","lcomputers.com","webcodez.com","globalnetworkissues.com","kubecloud.com","seobundlekit.com","solartrackingsystem.net","virtualwebdata.com"]);
+  (union isfuzzy=true
+  (CommonSecurityLog 
+    | parse Message with * '(' DNSName ')' * 
+    | where DNSName in~ (domains) or DestinationHostName has_any (domains) or RequestURL has_any(domains)
+    | extend AccountCustomEntity = SourceUserID, HostCustomEntity = DeviceName, IPCustomEntity = SourceIP
+    ),
+  (_Im_Dns (domain_has_any=domains)
+    | extend DNSName = DnsQuery
+    | extend IPCustomEntity = SrcIpAddr
+    ),
+  (VMConnection 
+    | parse RemoteDnsCanonicalNames with * '["' DNSName '"]' *
+    | where isnotempty(DNSName)
+    | where DNSName in~ (domains)
+    | extend IPCustomEntity = RemoteIp
+    ),
+  (DeviceNetworkEvents 
+    | where isnotempty(RemoteUrl) 
+    | where RemoteUrl  has_any (domains)  
+    | extend DNSName = RemoteUrl
+    | extend IPCustomEntity = RemoteIP 
+    | extend HostCustomEntity = DeviceName 
+    ),
+  (AzureDiagnostics 
+    | where ResourceType == "AZUREFIREWALLS"
+    | where Category == "AzureFirewallApplicationRule"
+    | parse msg_s with Protocol 'request from ' SourceHost ':' SourcePort 'to ' DestinationHost ':' DestinationPort '. Action:' Action
+    | where isnotempty(DestinationHost)
+    | where DestinationHost has_any (domains)  
+    | extend DNSName = DestinationHost 
+    | extend IPCustomEntity = SourceHost
+    ) 
+    )
+    QUERY
+}
+#name                       = "NOBELIUM IOCs related to FoggyWeb backdoor"
+#log_analytics_workspace_id = azurerm_log_analytics_workspace.Log_Analytics_WorkSpace.id
+#alert_rule_template_guid   = "c37711a4-5f44-4472-8afc-0679bc0ef966"
+#}
+resource "azurerm_sentinel_alert_rule_scheduled" "DNS_Domains_linked_to_WannaCry_ransomware_campaign"{
+  name                       = "DNS Domains linked to WannaCry ransomware campaign"
+  log_analytics_workspace_id = azurerm_log_analytics_solution.Log_Analytics_Solution_SecurityInsights.workspace_resource_id
+  display_name               = "DNS Domains linked to WannaCry ransomware campaign"
+  severity                   = "High"
+  query                      = <<QUERY
+  let badDomains = dynamic(["agrdwrtj.us", "bctxawdt.us", "cokfqwjmferc.us", "cxbenjiikmhjcerbj.us", "depuisgef.us", "edoknehyvbl.us", 
+  "enyeikruptiukjorq.com", "frullndjtkojlu.us", "gcidpiuvamynj.us", "gxrytjoclpvv.us", "hanoluexjqcf.us", "iarirjjrnuornts.us", 
+  "ifbjoosjqhaeqjjwaerri.us", "iouenviwrc.us", "kuuelejkfwk.us", "lkbsxkitgxttgaobxu.us", "nnnlafqfnrbynwor.us", "ns768.com", 
+  "ofdwcjnko.us", "peuwdchnvn.us", "pvbeqjbqrslnkmashlsxb.us", "pxyhybnyv.us", "qkkftmpy.us", "rkhlkmpfpoqxmlqmkf.us", 
+  "ryitsfeogisr.us", "srwcjdfrtnhnjekjerl.us", "thstlufnunxaksr.us", "udrgtaxgdyv.us", "w5q7spejg96n.com", "xmqlcikldft.us", 
+  "yobvyjmjbsgdfqnh.us", "yrwgugricfklb.us", "ywpvqhlqnssecpdemq.us"]);
+  DnsEvents
+  | where Name in~ (badDomains)
+  | summarize StartTime = min(TimeGenerated), EndTime = max(TimeGenerated), count() by Computer, ClientIP, WannaCrypt_Related_Domain = Name
+  | extend timestamp = StartTime, HostCustomEntity = Computer, IPCustomEntity = ClientIP, DomainCustomEntity = WannaCrypt_Related_Domain
+  ) 
+    )
+    QUERY
 }
