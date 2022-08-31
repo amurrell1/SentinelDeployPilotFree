@@ -1,0 +1,21 @@
+variable "location" {
+    default = "eastus"
+    description = "location of the RG"
+}
+variable "resource_group_name" {
+    default = "terrafromsentinel"
+}
+#variable "azurerm_log_analytics_workspace_id" {}
+variable "azurerm_log_analytics_workspace_name" {
+    default = "terrafromsentinel"
+    description = "name of law"
+}
+variable "azurerm_log_analytics_solution_name" {
+    default = "terraformsentinel"
+}
+variable "azurerm_resource_group_name" {
+    default = "terraformsentinel"
+    description = "resourcegroupname"
+}
+#variable "fusion_rule_name" {}
+#variable "azurerm_log_analytics_solution_id" {}

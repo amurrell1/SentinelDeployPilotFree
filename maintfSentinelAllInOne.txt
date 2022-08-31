@@ -1,0 +1,129 @@
+[Microsoft Cloud App Security Azure Security Center Azure Active Directory Identity Protection Azure Security Center for IoT Azure Advanced Threat Protection Microsoft Defender Advanced Threat Protection Office 365 Advanced Threat Protection]
+
+terraform {
+  required_providers {
+    azurerm = {
+      source = "hashicorp/azurerm"
+      version = "~>2.0"
+    }
+  }
+}
+provider "azurerm" {
+  features {}
+
+  subscription_id   = "xxxxxxxxx"
+  tenant_id         = "xxxxxxxxx"
+  client_id         = "xxxxxxxxx"
+  client_secret     = "xxxxxxxxx"
+}
+resource "azurerm_resource_group" "resource_group" {
+  name     = var.resource_group_name
+  location = var.location
+}
+resource "azurerm_log_analytics_workspace" "Log_Analytics_WorkSpace" {
+  name                = var.azurerm_log_analytics_workspace_name
+  location            = var.location
+  resource_group_name = var.resource_group_name
+  sku                 = "PerGB2018"
+}
+resource "azurerm_log_analytics_solution" "Log_Analytics_Solution_SecurityInsights" {
+  solution_name         = "SecurityInsights"
+    location              = azurerm_log_analytics_workspace.Log_Analytics_WorkSpace.location
+    resource_group_name   = azurerm_resource_group.resource_group.name
+    workspace_resource_id = azurerm_log_analytics_workspace.Log_Analytics_WorkSpace.id
+    workspace_name        = azurerm_log_analytics_workspace.Log_Analytics_WorkSpace.name
+
+  plan {
+    #name = var.azurerm_log_analytics_solution_name
+    publisher = "Microsoft"
+    product   = "OMSGallery/SecurityInsights"
+  }
+}
+resource "azurerm_sentinel_data_connector_office_365" "Office_365" {
+  name = "Office_365"
+ 
+  log_analytics_workspace_id = azurerm_log_analytics_workspace.Log_Analytics_WorkSpace.id
+}
+resource "azurerm_sentinel_data_connector_azure_active_directory" "Azure_Active_Directory_Identkity_Protection" {
+  name                       = "Azure Active Directory Identity Protection"
+  log_analytics_workspace_id = azurerm_log_analytics_workspace.Log_Analytics_WorkSpace.id
+}
+resource "azurerm_sentinel_data_connector_azure_advanced_threat_protection" "Microsoft_Defender_for_Identity" {
+  name                       = "Microsoft Defeneder for Identity"
+  log_analytics_workspace_id = azurerm_log_analytics_workspace.Log_Analytics_WorkSpace.id
+}
+resource "azurerm_sentinel_data_connector_microsoft_cloud_app_security" "Microsoft_Defender_for_CloudApps" {
+  name                       = "Microsoft Defender for Cloud Apps"
+  log_analytics_workspace_id = azurerm_log_analytics_workspace.Log_Analytics_WorkSpace.id
+}
+resource "azurerm_sentinel_data_connector_microsoft_defender_advanced_threat_protection" "Microsoft_Defender_for_Endpoint" {
+  name                       = "Microsoft Defender for Endpoint"
+  log_analytics_workspace_id = azurerm_log_analytics_workspace.Log_Analytics_WorkSpace.id
+}
+resource "azurerm_sentinel_data_connector_azure_security_center" "Defender_for_Cloud" {
+  name                       = "Defender for Cloud"
+  log_analytics_workspace_id = azurerm_log_analytics_workspace.Log_Analytics_WorkSpace.id
+}
+resource "azurerm_sentinel_alert_rule_fusion" "Fusion_Alert" {
+  name                       = "Microsoft Fusion Alert"
+  log_analytics_workspace_id = azurerm_log_analytics_workspace.Log_Analytics_WorkSpace.id
+  alert_rule_template_guid   = "f71aba3d-28fb-450b-b192-4e76a83015c8"
+}
+resource "azurerm_sentinel_alert_rule_ms_security_incident" "Create_incidents_based_on_all_alerts_generated_in_Azure_Active_Directory_Identity_Protection" {
+  name                       = "Create incidents based on all alerts generated in Azure Active Directory Identity Protection"
+   display_name               = "Create incidents based on all alerts generated in Azure Active Directory Identity Protection"
+  product_filter             = "Azure Active Directory Identity Protection"
+   severity_filter            = ["High"]
+  log_analytics_workspace_id = azurerm_log_analytics_workspace.Log_Analytics_WorkSpace.id
+  alert_rule_template_guid   = "532c1811-79ee-4d9f-8d4d-6304c840daa1"
+}
+resource "azurerm_sentinel_alert_rule_ms_security_incident" "Create_incidents_based_on_Defender_for_Cloud_alerts" {
+  name                       = "Create incidents based on all alerts generated in Azure Security Center"
+   display_name               = "Create incidents based on all alerts generated in Azure Security Center"
+  product_filter             = "Azure Security Center"
+   severity_filter            = ["High"]
+  log_analytics_workspace_id = azurerm_log_analytics_workspace.Log_Analytics_WorkSpace.id
+  alert_rule_template_guid   = "90586451-7ba8-4c1e-9904-7d1b7c3cc4d6"
+}
+resource "azurerm_sentinel_alert_rule_ms_security_incident" "Create-incidents_based_on_Azure_Advanced_Threat_Protection_alerts" {
+  name                       = "Create incidents based on all alerts generated in Azure Advanced Threat Protection"
+   display_name               = "Create incidents based on all alerts generated in Azure Advanced Threat Protection"
+   product_filter             = "Azure Advanced Threat Protection"
+    severity_filter            = ["High"]
+  log_analytics_workspace_id = azurerm_log_analytics_workspace.Log_Analytics_WorkSpace.id
+  alert_rule_template_guid   = "40ba9493-4183-4eee-974f-87fe39c8f267"
+}
+resource "azurerm_sentinel_alert_rule_ms_security_incident" "Create_incidents_based_on_Microsoft_Cloud_App_Security_alerts" {
+  name                       = "Create incidents based on all alerts generated in Microsoft Cloud App Security"
+  display_name               = "Create incidents based on all alerts generated in Microsoft Cloud App Security"
+    product_filter             = "Microsoft Cloud App Security"
+    severity_filter            = ["High"]
+  log_analytics_workspace_id = azurerm_log_analytics_workspace.Log_Analytics_WorkSpace.id
+  alert_rule_template_guid   = "b3cfc7c0-092c-481c-a55b-34a3979758cb"
+}
+resource "azurerm_sentinel_alert_rule_ms_security_incident" "Create_incidents_based_on_Office_365_Advanced_Threat_Protection_alerts" {
+  name                       = "Create incidents based on Office 365 Advanced Threat Protection alerts"
+   display_name               = "Create incidents based on Office 365 Advanced Threat Protection alerts"
+   product_filter             = "Office 365 Advanced Threat Protection"
+    severity_filter            = ["High"]
+  log_analytics_workspace_id = azurerm_log_analytics_workspace.Log_Analytics_WorkSpace.id
+  alert_rule_template_guid   = "ee1d718b-9ed9-4a71-90cd-a483a4f008df"
+}
+resource "azurerm_sentinel_alert_rule_ms_security_incident" "Create_incidents_based_on_Microsoft_Defender_Advanced_Threat_Protection_alerts" {
+  name                       = "Create incidents based on all alerts generated in Microsoft Defender Advanced Threat Protection"
+  display_name               = "Create incidents based on all alerts generated in Microsoft Defender Advanced Threat Protection"
+   product_filter             = "Microsoft Defender Advanced Threat Protection"
+    severity_filter            = ["High"]
+  log_analytics_workspace_id = azurerm_log_analytics_workspace.Log_Analytics_WorkSpace.id
+  alert_rule_template_guid   = "327cd4ed-ca42-454b-887c-54e1c91363c6"
+}
+resource "azurerm_sentinel_alert_rule_machine_learning_behavior_analytics" "MLBehaviorAnalytics" {
+  name                       = "MLBehaviorAnalytics"
+  log_analytics_workspace_id = azurerm_log_analytics_workspace.Log_Analytics_WorkSpace.id
+  alert_rule_template_guid   = "737a2ce1-70a3-4968-9e90-3e6aca836abf"
+}
+resource "azurerm_sentinel_alert_rule_machine_learning_behavior_analytics" "Anomalous_SSH_Login_Detection" {
+  name                       = "Anomalous SSH Login Detection"
+  log_analytics_workspace_id = azurerm_log_analytics_workspace.Log_Analytics_WorkSpace.id
+  alert_rule_template_guid   = "fa118b98-de46-4e94-87f9-8e6d5060b60b"
+}
